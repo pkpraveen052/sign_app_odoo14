@@ -3,6 +3,7 @@
 
 import base64
 import io
+import logging
 import os
 import time
 import uuid
@@ -24,6 +25,8 @@ from odoo.tools import DEFAULT_SERVER_DATE_FORMAT, formataddr, config, get_lang
 from odoo.exceptions import UserError, ValidationError
 
 TTFSearchPath.append(os.path.join(config["root_path"], "..", "addons", "web", "static", "src", "fonts", "sign"))
+
+_logger = logging.getLogger(__name__)
 
 
 def _fix_image_transparency(image):
@@ -342,14 +345,26 @@ class SignRequest(models.Model):
         if not public_user:
             # public user was deleted, fallback to avoid crash (info may leak)
             public_user = self.env.user
-        pdf_content, __ = report_action.with_user(public_user).sudo()._render_qweb_pdf(self.id)
-        attachment_log = self.env['ir.attachment'].create({
-            'name': "Certificate of completion - %s.pdf" % time.strftime('%Y-%m-%d - %H:%M:%S'),
-            'datas': base64.b64encode(pdf_content),
-            'type': 'binary',
-            'res_model': self._name,
-            'res_id': self.id,
-        })
+        attachment_ids = [(4, attachment.id)]
+        try:
+            pdf_content, __ = report_action.with_user(public_user).sudo()._render_qweb_pdf(self.id)
+            attachment_log = self.env['ir.attachment'].create({
+                'name': "Certificate of completion - %s.pdf" % time.strftime('%Y-%m-%d - %H:%M:%S'),
+                'datas': base64.b64encode(pdf_content),
+                'type': 'binary',
+                'res_model': self._name,
+                'res_id': self.id,
+            })
+            attachment_ids.append((4, attachment_log.id))
+        except UserError as e:
+            if 'wkhtmltopdf' not in str(e).lower():
+                raise
+            _logger.warning('Unable to generate signing certificate for request %s: %s', self.id, e)
+            self.message_post(
+                body=_(
+                    "The certificate of completion could not be generated because Wkhtmltopdf is not installed on this system."
+                )
+            )
         tpl = self.env.ref('sign.sign_template_mail_completed')
         for signer in self.request_item_ids:
             if not signer.signer_email:
@@ -383,7 +398,7 @@ class SignRequest(models.Model):
                  'author_id': author.id,
                  'email_to': signer.partner_id.email_formatted,
                  'subject': _('%s has been signed', self.reference),
-                 'attachment_ids': [(4, attachment.id), (4, attachment_log.id)]},
+                 'attachment_ids': attachment_ids},
                 force_send=True,
                 lang=signer_lang,
             )
