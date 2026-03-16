@@ -145,9 +145,13 @@ odoo.define('sign.views_custo', function(require) {
                         model: 'sign.template',
                         method: 'upload_template',
                         args: args,
+                        context: {
+                            sign_edit_call: sign_edit_context,
+                            sign_directly_without_mail: sign_directly_without_mail,
+                        },
                     })
                     .then(function(data) {
-                        self.do_action({
+                        var action = data.action || {
                             type: "ir.actions.client",
                             tag: 'sign.Template',
                             name: _.str.sprintf(_t('Template "%s"'), f.name),
@@ -156,7 +160,8 @@ odoo.define('sign.views_custo', function(require) {
                                 id: data.template,
                                 sign_directly_without_mail: sign_directly_without_mail,
                             },
-                        });
+                        };
+                        self.do_action(action);
                     })
                     .then(function() {
                         $upload_input.removeAttr('disabled');

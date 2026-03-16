@@ -92,3 +92,48 @@ class testAttachmentAccess(SavepointCase):
         with self.assertRaises(AccessError):
             template.write({'attachment_id': attachment_forbidden.id})
             template.datas
+
+
+    def test_go_to_custom_template_uses_send_request_for_inactive_templates(self):
+        attachment = self.env['ir.attachment'].create({'name': 'foo.pdf', 'datas': base64.b64encode(b'foo')})
+        template = self.env['sign.template'].create({'attachment_id': attachment.id, 'active': False})
+
+        action = template.go_to_custom_template()
+
+        self.assertEqual(action['context']['id'], template.id)
+        self.assertEqual(action['context']['sign_edit_call'], 'sign_send_request')
+
+    def test_go_to_custom_template_keeps_requested_mode_from_context(self):
+        attachment = self.env['ir.attachment'].create({'name': 'foo.pdf', 'datas': base64.b64encode(b'foo')})
+        template = self.env['sign.template'].create({'attachment_id': attachment.id})
+
+        action = template.with_context(sign_edit_call='sign_send_request').go_to_custom_template()
+
+        self.assertEqual(action['context']['sign_edit_call'], 'sign_send_request')
+
+
+    def test_open_template_from_attachment_creates_template_and_returns_editor_action(self):
+        attachment = self.env['ir.attachment'].create({'name': 'foo.pdf', 'datas': base64.b64encode(b'foo')})
+
+        action = self.env['sign.template'].open_template_from_attachment(attachment.id)
+        template = self.env['sign.template'].search([('attachment_id', '=', attachment.id)], limit=1)
+
+        self.assertTrue(template)
+        self.assertFalse(template.active)
+        self.assertEqual(action['tag'], 'sign.Template')
+        self.assertEqual(action['context']['id'], template.id)
+        self.assertEqual(action['context']['sign_edit_call'], 'sign_send_request')
+
+    def test_open_template_from_attachment_reuses_existing_template(self):
+        attachment = self.env['ir.attachment'].create({'name': 'foo.pdf', 'datas': base64.b64encode(b'foo')})
+        template = self.env['sign.template'].create({'attachment_id': attachment.id, 'active': False})
+
+        action = self.env['sign.template'].open_template_from_attachment(
+            attachment.id,
+            sign_edit_call='sign_template_edit',
+            sign_directly_without_mail=True,
+        )
+
+        self.assertEqual(action['context']['id'], template.id)
+        self.assertEqual(action['context']['sign_edit_call'], 'sign_template_edit')
+        self.assertTrue(action['context']['sign_directly_without_mail'])
