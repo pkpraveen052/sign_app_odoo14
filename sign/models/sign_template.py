@@ -95,11 +95,15 @@ class SignTemplate(models.Model):
 
     def go_to_custom_template(self, sign_directly_without_mail=False):
         self.ensure_one()
+        sign_edit_call = self.env.context.get('sign_edit_call', '')
+        if not sign_edit_call:
+            sign_edit_call = 'sign_send_request' if not self.active else 'sign_template_edit'
         return {
             'name': "Template \"%(name)s\"" % {'name': self.attachment_id.name},
             'type': 'ir.actions.client',
             'tag': 'sign.Template',
             'context': {
+                'sign_edit_call': sign_edit_call,
                 'id': self.id,
                 'sign_directly_without_mail': sign_directly_without_mail,
             },
@@ -113,6 +117,28 @@ class SignTemplate(models.Model):
         if self.filtered(lambda template: template.sign_request_ids):
             raise UserError(_("You can't delete a template for which signature requests exist but you can archive it instead."))
         return super(SignTemplate, self).unlink()
+
+
+    @api.model
+    def open_template_from_attachment(self, attachment_id, sign_edit_call='sign_send_request', sign_directly_without_mail=False):
+        attachment = self.env['ir.attachment'].browse(attachment_id).exists()
+        if not attachment:
+            raise UserError(_("The selected attachment does not exist."))
+
+        attachment.check('read')
+
+        template = self.search([('attachment_id', '=', attachment.id)], limit=1)
+        if not template:
+            template = self.create({
+                'attachment_id': attachment.id,
+                'favorited_ids': [(4, self.env.user.id)],
+                'active': False,
+            })
+            attachment.write({'res_model': self._name, 'res_id': template.id})
+
+        return template.with_context(sign_edit_call=sign_edit_call).go_to_custom_template(
+            sign_directly_without_mail=sign_directly_without_mail
+        )
 
     @api.model
     def upload_template(self, name=None, dataURL=None, active=True):
@@ -131,7 +157,15 @@ class SignTemplate(models.Model):
         template = self.create({'attachment_id': attachment.id, 'favorited_ids': [(4, self.env.user.id)], 'active': active})
         attachment.write({'res_model': self._name, 'res_id': template.id})
 
-        return {'template': template.id, 'attachment': attachment.id}
+        return {
+            'template': template.id,
+            'attachment': attachment.id,
+            'action': self.open_template_from_attachment(
+                template.attachment_id.id,
+                sign_edit_call=self.env.context.get('sign_edit_call', 'sign_send_request'),
+                sign_directly_without_mail=self.env.context.get('sign_directly_without_mail', False),
+            ),
+        }
 
     @api.model
     def update_from_pdfviewer(self, template_id=None, duplicate=None, sign_items=None, name=None):
